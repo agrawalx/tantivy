@@ -19,6 +19,7 @@ use crate::schema::document::{Document, Value};
 use crate::schema::{FieldEntry, FieldType, Schema, DATE_TIME_PRECISION_INDEXED};
 use crate::store::StorePluginWriter;
 use crate::tokenizer::{FacetTokenizer, PreTokenizedStream, TextAnalyzer, Tokenizer};
+use crate::vector::FlatVecWriter;
 use crate::{DocId, Opstamp, TantivyError};
 
 /// Computes the initial size of the hash table.
@@ -180,6 +181,7 @@ impl SegmentWriter {
         let max_doc = self.max_doc;
         self.plugin_writer_mut::<FieldNormsPluginWriter>()
             .fill_up_to_max_doc(max_doc);
+        self.plugin_writer_mut::<FlatVecWriter>().set_num_docs(max_doc);
         let mapping: Option<DocIdMapping> = self
             .segment
             .index()
@@ -239,6 +241,7 @@ impl SegmentWriter {
                     field_entry.name()
                 ))
             };
+
             if !field_entry.is_indexed() {
                 continue;
             }
@@ -439,10 +442,14 @@ impl SegmentWriter {
         add_operation: AddOperation<D>,
     ) -> crate::Result<()> {
         let AddOperation { document, opstamp } = add_operation;
+        let doc_id = self.max_doc;
         self.doc_opstamps.push(opstamp);
         self.plugin_writer_mut::<FastFieldsPluginWriter>()
             .writer_mut()
             .add_document(&document)?;
+        let schema = self.schema.clone();
+        self.plugin_writer_mut::<FlatVecWriter>()
+            .add_document(doc_id, &document, &schema)?;
         self.index_document(&document)?;
         if !self.ignore_store {
             let schema = self.schema.clone();
