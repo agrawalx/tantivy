@@ -13,7 +13,7 @@ use crate::directory::{CompositeWrite, Directory};
 use crate::index::SegmentComponent;
 use crate::plugin::PluginMergeContext;
 use crate::schema::FieldType;
-use crate::vector::reader::VectorReader;
+use crate::vector::reader::{VectorColumnReader, VectorReader};
 use crate::DocId;
 
 /// Merge source vectors into the target segment's `.flatvec` file.
@@ -58,23 +58,22 @@ pub(crate) fn merge_flat(ctx: &PluginMergeContext) -> crate::Result<()> {
         // Per-segment column views for this field (lazy open).
         let columns: Vec<_> = source_readers
             .iter()
-            .map(|reader| reader.open_flat_column(field))
-            .collect();
+            .map(|reader| reader.open_column(field))
+            .collect::<crate::Result<Vec<_>>>()?;
 
-        // Walk the target doc-id space, copying bytes for docs whose
-        // source had a value and recording their new doc-id in the
-        // target's present list.
         let mut target_present: Vec<DocId> = Vec::new();
-        let mut target_rows: Vec<u8> = Vec::new();
         let mut new_doc_id: DocId = 0;
-        for old_doc_addr in ctx.doc_id_mapping.iter_old_doc_addrs() {
-            if let Some(column) = &columns[old_doc_addr.segment_ord as usize] {
+        {
+            let rows_w = composite.for_field_with_idx(field, 1);
+            for old_doc_addr in ctx.doc_id_mapping.iter_old_doc_addrs() {
+                let column = &columns[old_doc_addr.segment_ord as usize];
                 if let Some(bytes) = column.vector_bytes_at(old_doc_addr.doc_id) {
                     target_present.push(new_doc_id);
-                    target_rows.extend_from_slice(bytes);
+                    rows_w.write_all(bytes)?;
                 }
+                new_doc_id += 1;
             }
-            new_doc_id += 1;
+            rows_w.flush()?;
         }
 
         // Sanity: the mapping iterator should yield exactly num_target_docs items.
@@ -84,11 +83,6 @@ pub(crate) fn merge_flat(ctx: &PluginMergeContext) -> crate::Result<()> {
         let bitmap_w = composite.for_field_with_idx(field, 0);
         Presence::serialize(&target_present, num_target_docs, bitmap_w)?;
         bitmap_w.flush()?;
-
-        // Slice (field, 1): dense f32 LE rows for present docs only.
-        let rows_w = composite.for_field_with_idx(field, 1);
-        rows_w.write_all(&target_rows)?;
-        rows_w.flush()?;
     }
     composite.close()?;
     Ok(())

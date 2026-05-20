@@ -181,7 +181,8 @@ impl SegmentWriter {
         let max_doc = self.max_doc;
         self.plugin_writer_mut::<FieldNormsPluginWriter>()
             .fill_up_to_max_doc(max_doc);
-        self.plugin_writer_mut::<FlatVecWriter>().set_num_docs(max_doc);
+        self.plugin_writer_mut::<FlatVecWriter>()
+            .set_num_docs(max_doc);
         let mapping: Option<DocIdMapping> = self
             .segment
             .index()

@@ -549,6 +549,17 @@ impl SegmentUpdater {
                 files.insert(segment_meta.relative_path(component));
             }
         }
+        // Also keep files for currently-registered plugins. Built-in plugins (e.g. the
+        // vector plugin) own custom extensions that are excluded from a segment's recorded
+        // `plugin_extensions`, but they are always registered, so cover them here.
+        for plugin in self.index.plugins() {
+            for ext in plugin.extensions() {
+                let component = crate::index::SegmentComponent::Custom(ext.to_string());
+                for segment_meta in &segment_metas {
+                    files.insert(segment_meta.relative_path(component.clone()));
+                }
+            }
+        }
         files.insert(META_FILEPATH.to_path_buf());
         files
     }
