@@ -1,14 +1,16 @@
-//! Per-segment vector reader.
+//! Per-segment vector storage dispatch.
 //!
-//! Composes a [`FlatVecReader`] and an [`IvfVecReader`]. Callers —
-//! primarily [`VectorBackend::for_segment`](super::backend::VectorBackend::for_segment)
-//! and the flat-format merge routine — ask for a field's column via
+//! Reads the segment's `.vecmeta` to learn which storage format was written
+//! (flat or IVF), opens the matching reader, and exposes a field's column via
 //! [`VectorColumnReader::open_column`].
 
 use std::collections::BTreeMap;
 
 use super::flat::{FlatVecReader, FlatVectorColumn};
 use super::ivf::{IvfVecReader, IvfVectorColumn};
+use super::meta::{VectorSegmentMeta, VectorStorageFormat, VECMETA_EXT};
+use crate::directory::error::OpenReadError;
+use crate::index::SegmentComponent;
 use crate::schema::{Field, FieldType};
 use crate::{DocId, SegmentReader, TantivyError};
 
@@ -23,9 +25,14 @@ pub trait VectorColumnReader {
 }
 
 pub struct VectorReader {
-    flat: FlatVecReader,
-    ivf: IvfVecReader,
+    storage: VectorStorageReader,
     vector_dims: BTreeMap<Field, usize>,
+}
+
+enum VectorStorageReader {
+    None,
+    Flat(FlatVecReader),
+    Ivf(IvfVecReader),
 }
 
 impl VectorReader {
@@ -37,9 +44,26 @@ impl VectorReader {
                 vector_dims.insert(field, opts.dim());
             }
         }
+        let meta_slice =
+            match segment_reader.open_read(SegmentComponent::Custom(VECMETA_EXT.to_string())) {
+                Ok(file_slice) => Some(file_slice),
+                Err(OpenReadError::FileDoesNotExist(_)) => None,
+                Err(err) => return Err(err.into()),
+            };
+        let storage = if let Some(file_slice) = meta_slice {
+            let meta = VectorSegmentMeta::open(file_slice)?;
+            let _payload = meta.payload;
+            match meta.format {
+                VectorStorageFormat::Flat => {
+                    VectorStorageReader::Flat(FlatVecReader::open(segment_reader)?)
+                }
+                VectorStorageFormat::Ivf => VectorStorageReader::Ivf(IvfVecReader::stub(schema)),
+            }
+        } else {
+            VectorStorageReader::None
+        };
         Ok(Self {
-            flat: FlatVecReader::open(segment_reader)?,
-            ivf: IvfVecReader::stub(&schema),
+            storage,
             vector_dims,
         })
     }
@@ -54,15 +78,13 @@ impl VectorColumnReader for VectorReader {
                 "field {field:?} is not a vector field"
             )));
         }
-        if self.ivf.has_column(field) {
-            return self.ivf.open_column(field).map(VectorColumn::Ivf);
+        match &self.storage {
+            VectorStorageReader::Flat(reader) => reader.open_column(field).map(VectorColumn::Flat),
+            VectorStorageReader::Ivf(reader) => reader.open_column(field).map(VectorColumn::Ivf),
+            VectorStorageReader::None => Err(TantivyError::InternalError(format!(
+                "no vector data for vector field {field:?} in segment"
+            ))),
         }
-        if self.flat.has_column(field) {
-            return self.flat.open_column(field).map(VectorColumn::Flat);
-        }
-        Err(TantivyError::InternalError(format!(
-            "no vector data for vector field {field:?} in segment"
-        )))
     }
 
     fn count(&self, field: Field) -> crate::Result<usize> {
@@ -71,15 +93,13 @@ impl VectorColumnReader for VectorReader {
                 "field {field:?} is not a vector field"
             )));
         }
-        if self.ivf.has_column(field) {
-            return self.ivf.count(field);
+        match &self.storage {
+            VectorStorageReader::Flat(reader) => reader.count(field),
+            VectorStorageReader::Ivf(reader) => reader.count(field),
+            VectorStorageReader::None => Err(TantivyError::InternalError(format!(
+                "no vector data for vector field {field:?} in segment"
+            ))),
         }
-        if self.flat.has_column(field) {
-            return self.flat.count(field);
-        }
-        Err(TantivyError::InternalError(format!(
-            "no vector data for vector field {field:?} in segment"
-        )))
     }
 
     fn dim(&self, field: Field) -> crate::Result<usize> {

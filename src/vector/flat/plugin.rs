@@ -8,11 +8,14 @@
 
 use std::io::Write;
 
+use common::TerminatingWrite;
+
 use super::presence::Presence;
 use crate::directory::{CompositeWrite, Directory};
 use crate::index::SegmentComponent;
 use crate::plugin::PluginMergeContext;
 use crate::schema::FieldType;
+use crate::vector::meta::{VectorStorageFormat, VECMETA_EXT};
 use crate::vector::reader::{VectorColumnReader, VectorReader};
 use crate::DocId;
 
@@ -32,6 +35,17 @@ pub(crate) fn merge_flat(ctx: &PluginMergeContext) -> crate::Result<()> {
     if ctx.cancel.wants_cancel() {
         return Err(crate::TantivyError::Cancelled);
     }
+    let meta_path = ctx
+        .target_segment
+        .relative_path(SegmentComponent::Custom(VECMETA_EXT.to_string()));
+    let mut meta_write = ctx
+        .target_segment
+        .index()
+        .directory()
+        .open_write(&meta_path)?;
+    VectorStorageFormat::Flat.serialize(&mut meta_write)?;
+    meta_write.terminate()?;
+
     let path = ctx
         .target_segment
         .relative_path(SegmentComponent::Custom(super::FLATVEC_EXT.to_string()));
