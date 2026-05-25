@@ -374,11 +374,11 @@ fn is_default_codec_types(types: &[columnar::CodecType]) -> bool {
 }
 
 fn default_vector_clustering_threshold() -> usize {
-    usize::MAX
+    1000
 }
 
 fn is_default_vector_clustering_threshold(threshold: &usize) -> bool {
-    *threshold == usize::MAX
+    *threshold == default_vector_clustering_threshold()
 }
 
 impl Default for IndexSettings {
