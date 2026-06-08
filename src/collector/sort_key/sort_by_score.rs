@@ -72,7 +72,6 @@ impl SortKeyComputer for SortBySimilarityScore {
         reader: &crate::SegmentReader,
         segment_collector: &mut TopBySortKeySegmentCollector<Self::Child, Self::Comparator>,
     ) -> crate::Result<()> {
-        let segment_ord = segment_collector.segment_ord;
         let top_n = &mut segment_collector.topn_computer;
 
         let (initial_score, initial_ord) = top_n
@@ -98,11 +97,6 @@ impl SortKeyComputer for SortBySimilarityScore {
                 top_n.push(score, doc);
                 top_n.pruning_threshold.unwrap_or(Score::MIN)
             })?;
-        }
-
-        let final_threshold = top_n.threshold.map(|t| t.0).unwrap_or(Score::MIN);
-        if let Some(shared) = &top_n.shared_threshold {
-            shared.update(final_threshold, segment_ord);
         }
 
         Ok(())
